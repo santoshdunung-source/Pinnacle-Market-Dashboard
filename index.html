@@ -1,0 +1,1191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Market Dashboard</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<style>
+  /* Palette matches pinnacletrades.com: white canvas, orange + green brand colors,
+     dark near-black text. Sampled from the live site's own computed styles. */
+  :root {
+    --bg: #f4f5f4;
+    --panel: #ffffff;
+    --panel-2: #ffffff;
+    --panel-border: #e7e9e7;
+    --panel-border-strong: #cfe8db;
+    --text: #1f1f1f;
+    --text-dim: #767676;
+    --green: #00a859;
+    --green-soft: rgba(0, 168, 89, 0.09);
+    --red: #d64545;
+    --red-soft: rgba(214, 69, 69, 0.09);
+    --orange: #f58634;
+    --orange-soft: rgba(245, 134, 52, 0.1);
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+    --display: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--display);
+    position: relative;
+  }
+
+  /* Background art — a rising bar-chart + trend line + rupee coins, echoing the
+     brief's reference photo but redrawn in the site's own green/orange palette
+     instead of that image's dark-blue/gold. Fixed to the viewport, sits behind
+     every panel (all of which are opaque), so it only ever shows in the gutters
+     and margins — never behind actual text or figures. */
+  .page-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .page-bg svg { position: absolute; bottom: 0; left: 0; width: 100%; height: 100%; }
+
+  /* ---- header ---- */
+  header {
+    position: relative;
+    overflow: hidden;
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    background: #ffffff;
+    border-bottom: 3px solid var(--orange);
+  }
+  /* Soft green/orange glow behind the wordmark — a light-theme echo of the
+     neon financial-chart look, using the site's own brand colors instead of teal. */
+  header::before {
+    content: "";
+    position: absolute;
+    top: -60%; left: -6%;
+    width: 260px; height: 260px;
+    background: radial-gradient(circle, rgba(0,168,89,0.16), rgba(245,134,52,0.10) 55%, transparent 75%);
+    filter: blur(10px);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .header-chart-deco {
+    position: absolute;
+    top: 0; right: 0;
+    height: 100%;
+    width: 420px;
+    max-width: 45%;
+    pointer-events: none;
+    z-index: 0;
+  }
+  @media (max-width: 720px) { .header-chart-deco { display: none; } }
+  header > * { position: relative; z-index: 1; }
+  header h1 {
+    font-size: 21px;
+    margin: 0;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: var(--green);
+  }
+  header .meta { font-size: 12px; color: var(--text-dim); font-family: var(--mono); margin-top: 4px; }
+  #status-pill {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 10px;
+    vertical-align: middle;
+    font-family: var(--mono);
+    letter-spacing: 0.03em;
+    border: 1px solid currentColor;
+  }
+  button.refresh-btn {
+    background: var(--green);
+    border: none;
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: var(--display);
+    box-shadow: 0 2px 10px rgba(0,168,89,0.25);
+  }
+  button.refresh-btn:hover { filter: brightness(1.08); }
+
+  /* ---- ticker tape ---- */
+  .ticker-wrap {
+    background: var(--orange);
+    overflow: hidden;
+    white-space: nowrap;
+    position: relative;
+  }
+  .ticker-wrap::before, .ticker-wrap::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 40px; z-index: 2;
+  }
+  .ticker-wrap::before { left: 0; background: linear-gradient(90deg, var(--orange), transparent); }
+  .ticker-wrap::after { right: 0; background: linear-gradient(270deg, var(--orange), transparent); }
+  .ticker-track {
+    display: inline-flex;
+    gap: 36px;
+    padding: 8px 0;
+    animation: ticker-scroll 38s linear infinite;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #ffffff;
+  }
+  .ticker-track span.tk-name { color: rgba(255,255,255,0.85); margin-right: 6px; }
+  .ticker-track .up { color: #d8ffe9; }
+  .ticker-track .down { color: #ffe1e1; }
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  /* ---- grid & panels ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 18px;
+    padding: 18px 24px 40px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    min-height: 80px;
+    position: relative;
+    box-shadow: 0 6px 18px -14px rgba(0,0,0,0.25);
+  }
+  .panel::before {
+    content: "";
+    position: absolute; top: 0; left: 14px; right: 14px; height: 3px;
+    background: linear-gradient(90deg, var(--green), var(--orange) 85%);
+    border-radius: 2px;
+  }
+  .panel h2 {
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin: 0 0 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--display);
+    font-weight: 700;
+    gap: 8px;
+  }
+  .panel h2 .title-txt { color: var(--text); }
+  .panel h2 .h2-right { display: flex; align-items: center; gap: 8px; }
+  .panel h2 .refresh-time { font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--text-dim); font-weight: 400; font-family: var(--mono); }
+
+  button.dl-btn {
+    background: var(--green-soft);
+    border: 1px solid var(--panel-border-strong);
+    color: var(--green);
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  button.dl-btn:hover { background: rgba(0,168,89,0.2); }
+  button.dl-btn:active { transform: scale(0.94); }
+
+  button.share-btn {
+    background: var(--orange-soft);
+    border: 1px solid rgba(245, 134, 52, 0.4);
+    color: var(--orange);
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  button.share-btn:hover { background: rgba(245,134,52,0.22); }
+  button.share-btn:active { transform: scale(0.94); }
+
+  .share-modal {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(20,20,20,0.45);
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .share-modal:not([hidden]) { display: flex; }
+  .share-modal-box {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 22px 24px;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 20px 60px -20px rgba(0,0,0,0.4);
+    border-top: 4px solid var(--green);
+  }
+  .share-modal-title { font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 6px; }
+  .share-modal-sub { font-size: 12.5px; color: var(--text-dim); margin-bottom: 16px; line-height: 1.5; }
+  .share-modal-actions { display: flex; flex-direction: column; gap: 10px; }
+  button.share-modal-target {
+    padding: 11px 14px;
+    border-radius: 8px;
+    border: none;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 13.5px;
+    cursor: pointer;
+    color: #ffffff;
+  }
+  button.share-modal-target.wa { background: #25D366; }
+  button.share-modal-target.tg { background: #29A9EB; }
+  button.share-modal-target:hover { filter: brightness(1.06); }
+  .share-modal-footer { display: flex; justify-content: space-between; margin-top: 16px; }
+  button.share-modal-link {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-dim); font-family: var(--display); font-size: 12px; text-decoration: underline;
+    padding: 4px;
+  }
+  button.share-modal-link:hover { color: var(--text); }
+
+  button.toggle-btn {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    padding: 7px 10px;
+    background: var(--green-soft);
+    border: 1px dashed var(--panel-border-strong);
+    border-radius: 7px;
+    color: var(--green);
+    font-family: var(--display);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button.toggle-btn:hover { background: rgba(0,168,89,0.18); }
+
+  .chart-period-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  button.period-btn {
+    background: transparent;
+    border: 1px solid var(--panel-border-strong);
+    color: var(--text-dim);
+    font-family: var(--display);
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button.period-btn.active { background: var(--green); border-color: var(--green); color: #ffffff; }
+  button.period-btn:hover:not(.active) { background: var(--green-soft); }
+  .chart-wrap { height: 260px; position: relative; }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--panel-border);
+    font-size: 13.5px;
+    gap: 8px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .name { color: var(--text); }
+  .row .num { text-align: right; white-space: nowrap; font-family: var(--mono); font-weight: 700; }
+  .up { color: var(--green); }
+  .down { color: var(--red); }
+  .dim { color: var(--text-dim); }
+  .warn { color: #b5691c; background: var(--orange-soft); border-radius: 6px; padding: 6px 8px; font-size: 12px; margin-top: 8px; }
+  .err { color: var(--red); font-size: 12px; }
+  .loading { color: var(--text-dim); font-size: 12px; font-family: var(--mono); }
+  .news-item { padding: 9px 0; border-bottom: 1px dashed var(--panel-border); font-size: 13px; }
+  .news-item:last-child { border-bottom: none; }
+  .news-item a { color: var(--text); text-decoration: none; }
+  .news-item a:hover { color: var(--green); }
+  .news-item .src { color: var(--text-dim); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
+  .group-label {
+    font-size: 11px; color: var(--orange); font-weight: 700; margin: 12px 0 5px;
+    text-transform: uppercase; letter-spacing: 0.05em; font-family: var(--display);
+  }
+  .wide { grid-column: 1 / -1; }
+  .empty { color: var(--text-dim); font-size: 13px; padding: 8px 0; }
+
+  footer.site-footer {
+    padding: 10px 24px 8px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  /* ---- header branding ---- */
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand img.logo { height: 40px; width: auto; display: block; }
+  .brand .brand-titles h1 { margin: 0; }
+
+  /* ---- compliance footer ---- */
+  .compliance {
+    margin: 0 24px 30px;
+    padding: 18px 20px;
+    border: 1px solid var(--panel-border);
+    border-top: 3px solid var(--green);
+    border-radius: 12px;
+    background: var(--panel);
+  }
+  .compliance-top {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .compliance-top img.logo { height: 32px; width: auto; display: block; }
+  .compliance-name {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 14px;
+    color: var(--green);
+    letter-spacing: 0.02em;
+  }
+  .compliance-regs {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-bottom: 8px;
+  }
+  .compliance-arn {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--orange);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .compliance-disclaimer {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    border-top: 1px dashed var(--panel-border);
+    padding-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-bg" id="page-bg" aria-hidden="true"></div>
+
+<header>
+  <svg class="header-chart-deco" viewBox="0 0 420 90" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="hcGrad" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0%" stop-color="#00a859" />
+        <stop offset="100%" stop-color="#f58634" />
+      </linearGradient>
+      <linearGradient id="hcFade" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+        <stop offset="35%" stop-color="#ffffff" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <!-- large translucent rupee glyph, echoing the brief's reference image -->
+    <text x="4" y="76" font-size="84" font-weight="800" font-family="'Open Sans', sans-serif" fill="url(#hcGrad)" opacity="0.12">₹</text>
+    <!-- candlestick bars, rising left to right like an uptrend -->
+    <g opacity="0.55">
+      <rect x="150" y="52" width="10" height="28" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="155" y1="46" x2="155" y2="84" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="168" y="44" width="10" height="24" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="173" y1="38" x2="173" y2="72" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="186" y="50" width="10" height="20" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="191" y1="44" x2="191" y2="74" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="204" y="36" width="10" height="30" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="209" y1="30" x2="209" y2="70" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="222" y="28" width="10" height="26" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="227" y1="22" x2="227" y2="58" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="240" y="18" width="10" height="30" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="245" y1="12" x2="245" y2="52" stroke="url(#hcGrad)" stroke-width="1.5" />
+      <rect x="258" y="10" width="10" height="26" rx="1.5" fill="url(#hcGrad)" />
+      <line x1="263" y1="4" x2="263" y2="40" stroke="url(#hcGrad)" stroke-width="1.5" />
+    </g>
+    <!-- smooth trend line riding over the bars -->
+    <path d="M150,66 C170,54 190,50 210,38 C230,28 250,20 268,10" fill="none" stroke="#00a859" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
+    <!-- fade the whole thing into the header's white background on the left edge -->
+    <rect x="0" y="0" width="420" height="90" fill="url(#hcFade)" />
+  </svg>
+  <div class="brand">
+    <img class="logo" src="logo.png" alt="Pinnacle Forex & Securities logo" />
+    <div class="brand-titles">
+      <h1>📈 Market Dashboard <span id="status-pill">…</span></h1>
+      <div class="meta" id="last-updated">Loading…</div>
+    </div>
+  </div>
+  <button class="refresh-btn" onclick="refreshAll()">⟳ Refresh now</button>
+</header>
+
+<div class="ticker-wrap">
+  <div class="ticker-track" id="ticker-track">Loading market data…</div>
+</div>
+
+<div class="grid">
+  <div class="panel" id="panel-indices">
+    <h2><span class="title-txt">Indices</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-indices','indices','NSE, BSE &amp; Yahoo Finance',&quot;Indices&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-indices','indices','NSE, BSE &amp; Yahoo Finance')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel wide" id="panel-nifty-chart">
+    <h2><span class="title-txt">Nifty 50 Chart</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-nifty-chart','nifty-50-chart','Yahoo Finance',&quot;Nifty 50 Chart&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-nifty-chart','nifty-50-chart','Yahoo Finance')">⬇</button></span></h2>
+    <div class="chart-period-tabs">
+      <button class="period-btn active" data-period="1d" onclick="setNiftyChartPeriod('1d')">1 Day</button>
+      <button class="period-btn" data-period="5d" onclick="setNiftyChartPeriod('5d')">5 Day</button>
+      <button class="period-btn" data-period="1mo" onclick="setNiftyChartPeriod('1mo')">1 Month</button>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="nifty-chart-canvas"></canvas>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-fii-dii">
+    <h2><span class="title-txt">FII / DII — Cash Market (₹ Cr)</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-fii-dii','fii-dii','NSE (fiidiiTradeReact)',&quot;FII / DII — Cash Market (₹ Cr)&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-fii-dii','fii-dii','NSE (fiidiiTradeReact)')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel" id="panel-currency">
+    <h2><span class="title-txt">Currency</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-currency','currency','Yahoo Finance',&quot;Currency&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-currency','currency','Yahoo Finance')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel" id="panel-commodities">
+    <h2><span class="title-txt">Commodities</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-commodities','commodities','TradingEconomics',&quot;Commodities&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-commodities','commodities','TradingEconomics')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel wide" id="panel-news">
+    <h2><span class="title-txt">News (last 2 hours)</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-news','news','Zerodha Pulse (pulse.zerodha.com)',&quot;News (last 2 hours)&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-news','news','Zerodha Pulse (pulse.zerodha.com)')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel" id="panel-52wh">
+    <h2><span class="title-txt">52-Week High</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-52wh','52-week-high','NSE (live-analysis-data-52weekhighstock)',&quot;52-Week High&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-52wh','52-week-high','NSE (live-analysis-data-52weekhighstock)')">⬇</button></span></h2>
+    <div class="body loading">Loading… (this scan is slow, be patient)</div>
+  </div>
+
+  <div class="panel" id="panel-ath">
+    <h2><span class="title-txt">All-Time High</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-ath','all-time-high','NSE 52-week-high list, verified against Yahoo Finance historical data',&quot;All-Time High&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-ath','all-time-high','NSE 52-week-high list, verified against Yahoo Finance historical data')">⬇</button></span></h2>
+    <div class="body loading">Loading… (this scan is slow, be patient)</div>
+  </div>
+
+  <div class="panel" id="panel-results-today">
+    <h2><span class="title-txt">Earnings Today</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-results-today','earnings-today','NSE (event-calendar) &amp; BSE (Corpforthresults)',&quot;Earnings Today&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-results-today','earnings-today','NSE (event-calendar) &amp; BSE (Corpforthresults)')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel" id="panel-results-tomorrow">
+    <h2><span class="title-txt">Earnings Tomorrow</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-results-tomorrow','earnings-tomorrow','NSE (event-calendar) &amp; BSE (Corpforthresults)',&quot;Earnings Tomorrow&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-results-tomorrow','earnings-tomorrow','NSE (event-calendar) &amp; BSE (Corpforthresults)')">⬇</button></span></h2>
+    <div class="body loading">Loading…</div>
+  </div>
+
+  <div class="panel wide" id="panel-slbm">
+    <h2><span class="title-txt">SLBM Opportunities (Series B)</span><span class="h2-right"><span class="refresh-time" data-ts></span><button class="share-btn" title="Share" onclick="sharePanel('panel-slbm','slbm-opportunities','NSE (live-analysis-slb)',&quot;SLBM Opportunities (Series B)&quot;)">📤</button><button class="dl-btn" title="Download as image" onclick="downloadPanel('panel-slbm','slbm-opportunities','NSE (live-analysis-slb)')">⬇</button></span></h2>
+    <div class="body loading">Loading… (this scan is slow, be patient)</div>
+  </div>
+</div>
+
+<div class="share-modal" id="share-modal" hidden>
+  <div class="share-modal-box">
+    <div class="share-modal-title">✓ Image copied to clipboard</div>
+    <div class="share-modal-sub">Open a chat below, then paste it in (Ctrl+V / Cmd+V) and hit send.</div>
+    <div class="share-modal-actions">
+      <button class="share-modal-target wa" onclick="openShareTarget('whatsapp')">Open WhatsApp Web</button>
+      <button class="share-modal-target tg" onclick="openShareTarget('telegram')">Open Telegram Web</button>
+    </div>
+    <div class="share-modal-footer">
+      <button class="share-modal-link" onclick="shareModalDownload()">Download instead</button>
+      <button class="share-modal-link" onclick="closeShareModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<footer class="site-footer">Live data — Yahoo Finance · NSE · BSE · TradingEconomics · Zerodha Pulse</footer>
+
+<div class="compliance" id="compliance-block">
+  <div class="compliance-top">
+    <img class="logo" src="logo.png" alt="Pinnacle Forex & Securities logo" />
+    <div class="compliance-name">PINNACLE FOREX &amp; SECURITIES PVT. LTD.</div>
+  </div>
+  <div class="compliance-regs">
+    SEBI Reg. No.: INZ000182337 &nbsp;|&nbsp; BSE Cash Member ID: 6295 &nbsp;|&nbsp; NSE Cash Member ID: 14122<br>
+    NSE F&amp;O Member ID: 14122 &nbsp;|&nbsp; NSE CD Member ID: 13558 &nbsp;|&nbsp; NCDEX Member ID: 01275 &nbsp;|&nbsp; MCX Member ID: 56425<br>
+    CDSL DP ID: 12074400 &nbsp;|&nbsp; SEBI Regn. No. (DP): IN-DP-732-2022
+  </div>
+  <div class="compliance-arn">AMFI Registered Mutual Fund Distributor &nbsp;|&nbsp; ARN-113170</div>
+  <div class="compliance-disclaimer">
+    <strong>Disclaimer:</strong> This content is shared by Pinnacle Forex &amp; Securities Pvt. Ltd. for general
+    market information and awareness only. It does not constitute investment/trading advice, research, or a
+    recommendation, offer, or solicitation to buy or sell any securities, commodities, or currency derivatives.
+    Investments in the securities/commodities/currency market are subject to market risks; read all related
+    documents carefully before investing. Mutual Fund investments are subject to market risks, read all
+    scheme-related documents carefully. Past performance is not indicative of future returns. Data is sourced
+    from third parties (Yahoo Finance, NSE, BSE, TradingEconomics, Zerodha Pulse) believed to be reliable but
+    not guaranteed for accuracy or completeness. Registered as a Stockbroker (SEBI Reg. No. INZ000182337),
+    Depository Participant (SEBI Regn. No. IN-DP-732-2022), and AMFI-registered Mutual Fund Distributor
+    (ARN-113170).
+  </div>
+</div>
+
+<script>
+const API = "";
+let lastIndices = null;
+
+// ---------------- decorative page background ----------------
+// Redraws the brief's reference photo (bar chart + rising trend line + gold
+// rupee coins on a dark-blue grid) as an original graphic in the dashboard's
+// own green/orange palette on a light ground. Built once at load, not tied to
+// live data.
+function buildPageBackgroundSvgMarkup() {
+  const width = 1200, height = 500;
+  // three noisy-but-rising "waves", same rhythm as the reference image
+  const heights = [
+    40, 55, 45, 70, 60, 90, 75, 110, 95, 130, 115, 140, 120,
+    90, 70, 100, 85, 120, 105, 150, 130, 170, 150, 190, 175, 210,
+    150, 130, 170, 155, 200, 185, 230, 215, 260, 245, 290, 270, 320, 300,
+  ];
+  const barGap = 8;
+  const barW = (width / heights.length) - barGap;
+
+  let barsHtml = "";
+  const points = [];
+  heights.forEach((h, i) => {
+    const x = i * (barW + barGap) + barGap / 2;
+    const y = height - h;
+    barsHtml += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h}" rx="2" fill="url(#pbBarGrad)" />`;
+    points.push([x + barW / 2, y - 6]);
+  });
+
+  const linePath = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+
+  // a coin riding each wave's peak, like the reference image
+  const peakIdxs = [11, 24, 38];
+  let coinsHtml = "";
+  peakIdxs.forEach((idx) => {
+    const [cx, cy] = points[idx];
+    coinsHtml += `
+      <g transform="translate(${cx.toFixed(1)},${(cy - 26).toFixed(1)})">
+        <circle r="20" fill="url(#pbCoinGrad)" opacity="0.5" />
+        <text x="0" y="7" text-anchor="middle" font-size="20" font-weight="800" fill="#ffffff" opacity="0.6" font-family="'Open Sans',sans-serif">₹</text>
+      </g>`;
+  });
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMax slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="pbGrid" width="36" height="36" patternUnits="userSpaceOnUse">
+          <path d="M36 0H0V36" fill="none" stroke="#00a859" stroke-opacity="0.07" stroke-width="1"/>
+        </pattern>
+        <linearGradient id="pbBarGrad" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%" stop-color="#00a859" stop-opacity="0.10" />
+          <stop offset="100%" stop-color="#f58634" stop-opacity="0.18" />
+        </linearGradient>
+        <linearGradient id="pbCoinGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#ffd77a" />
+          <stop offset="100%" stop-color="#f58634" />
+        </linearGradient>
+      </defs>
+      <rect width="${width}" height="${height}" fill="url(#pbGrid)" />
+      <g>${barsHtml}</g>
+      <path d="${linePath}" fill="none" stroke="#00a859" stroke-width="3" stroke-opacity="0.25" stroke-linejoin="round" stroke-linecap="round" />
+      ${coinsHtml}
+    </svg>`;
+}
+
+function buildPageBackground() {
+  document.getElementById("page-bg").innerHTML = buildPageBackgroundSvgMarkup();
+}
+buildPageBackground();
+
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function arrowClass(v) { return v >= 0 ? "up" : "down"; }
+function arrow(v) { return v >= 0 ? "▲" : "▼"; }
+
+function setBody(panelId, html, ts) {
+  const panel = document.getElementById(panelId);
+  panel.querySelector(".body").innerHTML = html;
+  const tsEl = panel.querySelector("[data-ts]");
+  if (tsEl && ts) tsEl.textContent = fmtTime(ts);
+}
+
+function setError(panelId, msg) {
+  setBody(panelId, `<div class="err">⚠️ ${msg}</div>`);
+}
+
+async function fetchJSON(path) {
+  const resp = await fetch(API + path);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+// ---------------- per-panel PNG export, matching the dashboard theme ----------------
+// Every exported image carries the company logo + SEBI/AMFI registration details +
+// disclaimer baked in, since these images are meant to be shared with clients / on
+// social media and must carry that disclosure on their own.
+function buildExportFooter(source) {
+  const footer = document.createElement("div");
+  footer.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed #e7e9e7; display:flex; gap:10px; align-items:flex-start;";
+  const sourceLine = source ? `<div style="margin-top:3px;"><strong style="color:#1f1f1f;">Source:</strong> ${source}</div>` : "";
+  footer.innerHTML = `
+    <img src="logo.png" class="export-footer-logo" style="height:26px; width:auto; flex-shrink:0;" />
+    <div style="font-family:'JetBrains Mono', ui-monospace, monospace; font-size:9px; line-height:1.5; color:#767676;">
+      <div style="font-family:'Open Sans', sans-serif; font-weight:800; font-size:11px; color:#00a859;">PINNACLE FOREX &amp; SECURITIES PVT. LTD.</div>
+      <div>SEBI Reg. No. INZ000182337 &nbsp;|&nbsp; NSE/BSE Member &nbsp;|&nbsp; AMFI ARN-113170</div>
+      ${sourceLine}
+      <div style="margin-top:4px; max-width:620px; font-size:7px; line-height:1.45; color:#9a9a9a;"><strong style="color:#767676;">Disclaimer:</strong> This content is shared by Pinnacle Forex &amp; Securities Pvt. Ltd. for general market information and awareness only. It does not constitute investment/trading advice, research, or a recommendation, offer, or solicitation to buy or sell any securities, commodities, or currency derivatives. Investments in the securities/commodities/currency market are subject to market risks; read all related documents carefully before investing. Mutual Fund investments are subject to market risks, read all scheme-related documents carefully. Past performance is not indicative of future returns. Data is sourced from third parties believed to be reliable but not guaranteed for accuracy or completeness.</div>
+    </div>`;
+  return footer;
+}
+
+// Renders panelId into an offscreen clone (with the compliance footer appended)
+// and rasterizes it with html2canvas. Shared by both the Download and Share
+// buttons so the exported image is identical either way.
+async function renderPanelCanvas(panelId, source) {
+  const original = document.getElementById(panelId);
+
+  // The panel card floats on a padded border showing the same background motif
+  // as the live dashboard, so exported images carry that branding too instead of
+  // a bare white edge. The grid is a plain CSS gradient (renders fine through
+  // html2canvas); the bar-chart/trend-line/coins strip is drawn straight onto
+  // the canvas afterwards with the 2D API — a percentage-sized SVG data-URI
+  // background-image turned out not to rasterize reliably through html2canvas.
+  const PAD = 34;
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText = `position:fixed; left:-99999px; top:0; width:${original.offsetWidth + PAD * 2}px; ` +
+    `padding:${PAD}px; box-sizing:border-box;`;
+  wrapper.style.backgroundColor = "#f4f5f4";
+  wrapper.style.backgroundImage =
+    "repeating-linear-gradient(0deg, rgba(0,168,89,0.08) 0px, rgba(0,168,89,0.08) 1px, transparent 1px, transparent 32px), " +
+    "repeating-linear-gradient(90deg, rgba(0,168,89,0.08) 0px, rgba(0,168,89,0.08) 1px, transparent 1px, transparent 32px)";
+  const clone = original.cloneNode(true);
+  // cloneNode copies <canvas> elements but not their drawn pixels (e.g. the Chart.js
+  // Nifty chart) — copy the bitmap across manually so the export isn't blank there.
+  const originalCanvases = original.querySelectorAll("canvas");
+  const cloneCanvases = clone.querySelectorAll("canvas");
+  originalCanvases.forEach((oc, i) => {
+    const cc = cloneCanvases[i];
+    if (cc && oc.width && oc.height) {
+      cc.width = oc.width;
+      cc.height = oc.height;
+      cc.getContext("2d").drawImage(oc, 0, 0);
+    }
+  });
+  clone.querySelectorAll(".dl-btn, .share-btn").forEach((b) => b.remove());
+  // exported images should always show the full list, not the collapsed default
+  clone.querySelectorAll(".collapse-rest").forEach((el) => { el.hidden = false; });
+  clone.querySelectorAll(".toggle-btn").forEach((b) => b.remove());
+  clone.appendChild(buildExportFooter(source));
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+
+  try {
+    const logoImg = clone.querySelector('.export-footer-logo');
+    if (logoImg && !logoImg.complete) {
+      await new Promise((resolve) => { logoImg.onload = resolve; logoImg.onerror = resolve; });
+    }
+    const canvas = await html2canvas(wrapper, { backgroundColor: "#f4f5f4", scale: 2, useCORS: true });
+    const scaleFactor = canvas.width / wrapper.offsetWidth;
+    drawBottomStrip(canvas, PAD * scaleFactor);
+    return canvas;
+  } finally {
+    document.body.removeChild(wrapper);
+  }
+}
+
+// Draws the bar-chart + trend-line + coin motif directly onto the export canvas's
+// bottom border strip, in device pixels — reliable regardless of how the host
+// browser or html2canvas handle background-image sizing.
+function drawBottomStrip(canvas, stripH) {
+  const ctx = canvas.getContext("2d");
+  // html2canvas leaves its own internal transform (translate + scale, from
+  // positioning the offscreen wrapper) on this context — reset to identity so
+  // these coordinates map 1:1 to actual canvas pixels.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const totalW = canvas.width;
+  const baseY = canvas.height;
+
+  const rawHeights = [
+    40, 55, 45, 70, 60, 90, 75, 110, 95, 130, 115, 140, 120,
+    90, 70, 100, 85, 120, 105, 150, 130, 170, 150, 190, 175, 210,
+    150, 130, 170, 155, 200, 185, 230, 215, 260, 245, 290, 270, 320, 300,
+  ];
+  const maxH = Math.max(...rawHeights);
+  const n = rawHeights.length;
+  const gap = totalW * 0.006;
+  const barW = totalW / n - gap;
+
+  const barGrad = ctx.createLinearGradient(0, baseY - stripH, 0, baseY);
+  barGrad.addColorStop(0, "rgba(245,134,52,0.6)");
+  barGrad.addColorStop(1, "rgba(0,168,89,0.55)");
+
+  const points = [];
+  ctx.fillStyle = barGrad;
+  rawHeights.forEach((rh, i) => {
+    const h = (rh / maxH) * stripH * 0.82;
+    const x = i * (barW + gap) + gap / 2;
+    const y = baseY - h;
+    ctx.fillRect(x, y, barW, h);
+    points.push([x + barW / 2, y - stripH * 0.06]);
+  });
+
+  ctx.beginPath();
+  points.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)));
+  ctx.strokeStyle = "rgba(0,168,89,0.55)";
+  ctx.lineWidth = Math.max(2, stripH * 0.06);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  const peakIdxs = [11, 24, 38];
+  const r = stripH * 0.3;
+  peakIdxs.forEach((idx) => {
+    const [cx, cy] = points[idx];
+    const coinY = cy - r - stripH * 0.08;
+    const coinGrad = ctx.createLinearGradient(cx - r, coinY - r, cx + r, coinY + r);
+    coinGrad.addColorStop(0, "#ffd77a");
+    coinGrad.addColorStop(1, "#f58634");
+
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.arc(cx, coinY, r, 0, Math.PI * 2);
+    ctx.fillStyle = coinGrad;
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `800 ${Math.round(r * 1.1)}px 'Open Sans', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("₹", cx, coinY + r * 0.05);
+    ctx.globalAlpha = 1;
+  });
+}
+
+function triggerCanvasDownload(canvas, filename) {
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  link.download = `${filename}-${stamp}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
+async function downloadPanel(panelId, filename, source) {
+  const btn = document.getElementById(panelId).querySelector(".dl-btn");
+  const originalLabel = btn.textContent;
+  btn.textContent = "…";
+  try {
+    const canvas = await renderPanelCanvas(panelId, source);
+    triggerCanvasDownload(canvas, filename);
+  } catch (e) {
+    console.error("Download failed:", e);
+    alert("Couldn't generate the image: " + e.message);
+  } finally {
+    btn.textContent = originalLabel;
+  }
+}
+
+// Web Share API: hands the rendered PNG straight to the device's own share sheet
+// (WhatsApp, Telegram, Mail, AirDrop, ...) in one tap — no download-then-attach
+// step. This only works where the OS/browser registers those apps as share
+// targets, which in practice means phones. Neither WhatsApp Web nor Telegram Web
+// exposes any way to attach an image via a link (their share links only take
+// pre-filled text/URLs), so on desktop we fall back to copying the image to the
+// clipboard and opening the web app — one paste (Ctrl+V) instead of a full
+// download-then-browse-to-file flow.
+async function sharePanel(panelId, filename, source, title) {
+  const btn = document.getElementById(panelId).querySelector(".share-btn");
+  const originalLabel = btn.textContent;
+  btn.textContent = "…";
+  try {
+    const canvas = await renderPanelCanvas(panelId, source);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    const file = new File([blob], `${filename}.png`, { type: "image/png" });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: title, text: title });
+      return;
+    }
+
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        showShareModal(canvas, filename);
+        return;
+      } catch (clipErr) {
+        console.warn("Clipboard copy failed, falling back to download:", clipErr);
+      }
+    }
+
+    alert("Your browser doesn't support sharing or copying images directly — downloading it instead so you can attach it manually.");
+    triggerCanvasDownload(canvas, filename);
+  } catch (e) {
+    if (e.name !== "AbortError") { // AbortError just means the user closed the share sheet
+      console.error("Share failed:", e);
+      alert("Couldn't share the image: " + e.message);
+    }
+  } finally {
+    btn.textContent = originalLabel;
+  }
+}
+
+// Desktop fallback picker: the image is already on the clipboard by the time this
+// shows — these buttons just open the web app so the user can paste into a chat.
+let shareModalCanvas = null;
+let shareModalFilename = null;
+
+function showShareModal(canvas, filename) {
+  shareModalCanvas = canvas;
+  shareModalFilename = filename;
+  document.getElementById("share-modal").hidden = false;
+}
+
+function closeShareModal() {
+  document.getElementById("share-modal").hidden = true;
+  shareModalCanvas = null;
+  shareModalFilename = null;
+}
+
+function openShareTarget(target) {
+  const url = target === "whatsapp" ? "https://web.whatsapp.com" : "https://web.telegram.org";
+  window.open(url, "_blank", "noopener");
+  closeShareModal();
+}
+
+function shareModalDownload() {
+  if (shareModalCanvas) triggerCanvasDownload(shareModalCanvas, shareModalFilename);
+  closeShareModal();
+}
+
+function updateTicker() {
+  if (!lastIndices) return;
+  const parts = [];
+  for (const [name, row] of Object.entries(lastIndices)) {
+    if (!row) continue;
+    const cls = row.change >= 0 ? "up" : "down";
+    parts.push(`<span><span class="tk-name">${name}</span><span class="${cls}">${row.close.toLocaleString()} ${arrow(row.change)} ${row.pchange.toFixed(2)}%</span></span>`);
+  }
+  const html = parts.join("<span class='dim'>&nbsp;&nbsp;•&nbsp;&nbsp;</span>");
+  // duplicate content for a seamless scrolling loop
+  document.getElementById("ticker-track").innerHTML = html + "<span class='dim'>&nbsp;&nbsp;•&nbsp;&nbsp;</span>" + html;
+}
+
+async function loadIndices() {
+  try {
+    const res = await fetchJSON("/api/indices");
+    if (!res.data) return setError("panel-indices", res.error || "no data");
+    lastIndices = res.data;
+    updateTicker();
+    let html = "";
+    for (const [name, row] of Object.entries(res.data)) {
+      if (!row) {
+        html += `<div class="row"><span class="name">${name}</span><span class="num dim">n/a</span></div>`;
+        continue;
+      }
+      html += `<div class="row">
+        <span class="name">${name}</span>
+        <span class="num ${arrowClass(row.change)}">${row.close.toLocaleString()} ${arrow(row.change)} ${row.change.toFixed(2)} (${row.pchange.toFixed(2)}%)</span>
+      </div>`;
+    }
+    setBody("panel-indices", html, res.fetched_at);
+  } catch (e) { setError("panel-indices", e.message); }
+}
+
+// ---------------- Nifty 50 chart (Yahoo Finance, 1D / 5D / 1M) ----------------
+let niftyChartPeriod = "1d";
+let niftyChartInstance = null;
+
+function setNiftyChartPeriod(period) {
+  niftyChartPeriod = period;
+  document.querySelectorAll(".period-btn").forEach((b) => b.classList.toggle("active", b.dataset.period === period));
+  loadNiftyChart();
+}
+
+async function loadNiftyChart() {
+  const panel = document.getElementById("panel-nifty-chart");
+  const wrap = panel.querySelector(".chart-wrap");
+  // the canvas may have been replaced by an error message on a previous failed load
+  if (!document.getElementById("nifty-chart-canvas")) {
+    wrap.innerHTML = `<canvas id="nifty-chart-canvas"></canvas>`;
+    niftyChartInstance = null;
+  }
+  try {
+    const res = await fetchJSON(`/api/nifty-chart?period=${niftyChartPeriod}`);
+    if (!res.data || !res.data.values.length) throw new Error(res.error || "no data");
+
+    const tsEl = panel.querySelector("[data-ts]");
+    if (tsEl && res.fetched_at) tsEl.textContent = fmtTime(res.fetched_at);
+
+    const values = res.data.values;
+    const isUp = values[values.length - 1] >= values[0];
+    const lineColor = isUp ? "#00a859" : "#d64545";
+    const fillColor = isUp ? "rgba(0,168,89,0.12)" : "rgba(214,69,69,0.12)";
+
+    const ctx = document.getElementById("nifty-chart-canvas").getContext("2d");
+    if (niftyChartInstance) niftyChartInstance.destroy();
+    niftyChartInstance = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: res.data.labels,
+        datasets: [{
+          data: values,
+          borderColor: lineColor,
+          backgroundColor: fillColor,
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.25,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#767676", maxTicksLimit: 8, font: { family: "JetBrains Mono", size: 10 } }, grid: { color: "#f0f1f0" } },
+          y: { ticks: { color: "#767676", font: { family: "JetBrains Mono", size: 10 } }, grid: { color: "#f0f1f0" } },
+        },
+      },
+    });
+  } catch (e) {
+    wrap.innerHTML = `<div class="err">⚠️ ${e.message}</div>`;
+  }
+}
+
+async function loadFiiDii() {
+  try {
+    const res = await fetchJSON("/api/fii-dii");
+    if (!res.data) return setError("panel-fii-dii", res.error || "not available yet");
+    let html = "";
+    for (const label of ["FII", "DII"]) {
+      const row = res.data[label];
+      if (!row) { html += `<div class="row"><span class="name">${label}</span><span class="num dim">n/a</span></div>`; continue; }
+      html += `<div class="row">
+        <span class="name">${label} <span class="dim">(${row.date})</span></span>
+        <span class="num ${arrowClass(row.net)}">Net ${row.net >= 0 ? "+" : ""}${row.net.toFixed(2)}</span>
+      </div>
+      <div class="row" style="border-bottom:none; padding-top:0;">
+        <span class="dim" style="font-size:11px;">Buy ${row.buy.toFixed(2)} | Sell ${row.sell.toFixed(2)}</span>
+      </div>`;
+    }
+    if (res.fresh === false) html += `<div class="warn">Showing previous day's data — NSE hasn't published today's figures yet.</div>`;
+    setBody("panel-fii-dii", html, res.fetched_at);
+  } catch (e) { setError("panel-fii-dii", e.message); }
+}
+
+async function loadCurrency() {
+  try {
+    const res = await fetchJSON("/api/currency");
+    if (!res.data) return setError("panel-currency", res.error || "no data");
+    let html = "";
+    for (const [pair, row] of Object.entries(res.data)) {
+      if (!row) { html += `<div class="row"><span class="name">${pair}</span><span class="num dim">n/a</span></div>`; continue; }
+      html += `<div class="row">
+        <span class="name">${pair}</span>
+        <span class="num ${arrowClass(row.chg)}">${row.last} ${arrow(row.chg)} ${row.chg} (${row.pchg}%)</span>
+      </div>`;
+    }
+    setBody("panel-currency", html, res.fetched_at);
+  } catch (e) { setError("panel-currency", e.message); }
+}
+
+async function loadCommodities() {
+  try {
+    const res = await fetchJSON("/api/commodities");
+    if (!res.data) return setError("panel-commodities", res.error || "no data");
+    let html = "";
+    for (const [name, row] of Object.entries(res.data.items)) {
+      if (!row) { html += `<div class="row"><span class="name">${name}</span><span class="num dim">n/a</span></div>`; continue; }
+      html += `<div class="row">
+        <span class="name">${name}</span>
+        <span class="num ${arrowClass(row.chg)}">${row.price} ${arrow(row.chg)} ${row.chg} (${row.pchg}%)</span>
+      </div>`;
+    }
+    if (res.data.warning) html += `<div class="warn">${res.data.warning}</div>`;
+    setBody("panel-commodities", html, res.fetched_at);
+  } catch (e) { setError("panel-commodities", e.message); }
+}
+
+async function loadNews() {
+  try {
+    const res = await fetchJSON("/api/news");
+    if (!res.data) return setError("panel-news", res.error || "no data");
+    if (!res.data.length) { setBody("panel-news", `<div class="empty">No news in the last 2 hours.</div>`, res.fetched_at); return; }
+    let html = "";
+    for (const item of res.data) {
+      const ageStr = item.age_min < 60 ? `${Math.round(item.age_min)}m ago` : `${(item.age_min / 60).toFixed(1)}h ago`;
+      html += `<div class="news-item">
+        <a href="${item.url}" target="_blank" rel="noopener">${item.title}</a>
+        <div class="src">${ageStr} — ${item.source}</div>
+      </div>`;
+    }
+    setBody("panel-news", html, res.fetched_at);
+  } catch (e) { setError("panel-news", e.message); }
+}
+
+// ---------------- collapsible list helper ----------------
+// Renders `visibleCount` rows up front, with the rest hidden behind a "Show all"
+// toggle so long scans (52-week-high can run to 100+ symbols) don't need truncating
+// with a bare "+N more" — the full list is still there, just collapsed by default.
+let collapseIdCounter = 0;
+function renderCollapsibleRows(rows, rowHtml, visibleCount = 10) {
+  if (!rows.length) return `<div class="empty">None currently.</div>`;
+  const visible = rows.slice(0, visibleCount).map(rowHtml).join("");
+  const rest = rows.slice(visibleCount);
+  if (!rest.length) return visible;
+  const id = `collapse-${++collapseIdCounter}`;
+  const restHtml = rest.map(rowHtml).join("");
+  return `${visible}<div class="collapse-rest" id="${id}" hidden>${restHtml}</div>
+    <button class="toggle-btn" data-target="${id}" data-total="${rows.length}" data-visible="${visibleCount}" onclick="toggleCollapse(this)">Show all ${rows.length} ▾</button>`;
+}
+
+function toggleCollapse(btn) {
+  const target = document.getElementById(btn.dataset.target);
+  const isHidden = target.hidden;
+  target.hidden = !isHidden;
+  btn.textContent = isHidden ? "Show less ▲" : `Show all ${btn.dataset.total} ▾`;
+}
+
+function stockRowHtml(row) {
+  return `<div class="row">
+    <span class="name">${row.symbol}</span>
+    <span class="num ${arrowClass(row.pChange||0)}">${row.ltp} (${(row.pChange||0).toFixed(2)}%)</span>
+  </div>`;
+}
+
+async function load52wh() {
+  try {
+    const res = await fetchJSON("/api/52-week-high");
+    if (!res.data) {
+      setError("panel-52wh", res.error || "no data");
+      setError("panel-ath", res.error || "no data");
+      return;
+    }
+    const week52 = [...res.data.week52].sort((a,b) => (b.pChange||0) - (a.pChange||0));
+    const allTime = [...res.data.all_time].sort((a,b) => (b.pChange||0) - (a.pChange||0));
+    setBody("panel-52wh", `<div class="group-label">${week52.length} stocks</div>` + renderCollapsibleRows(week52, stockRowHtml), res.fetched_at);
+    setBody("panel-ath", `<div class="group-label">${allTime.length} stocks</div>` + renderCollapsibleRows(allTime, stockRowHtml), res.fetched_at);
+  } catch (e) {
+    setError("panel-52wh", e.message);
+    setError("panel-ath", e.message);
+  }
+}
+
+function resultRowHtml(row) {
+  return `<div class="row">
+    <span class="name">${row.symbol} <span class="dim">(${row.exchange})</span></span>
+    <span class="num dim">₹${Math.round(row.market_cap_cr)} Cr</span>
+  </div>`;
+}
+
+async function loadResults() {
+  try {
+    const res = await fetchJSON("/api/results-calendar");
+    if (!res.data) {
+      setError("panel-results-today", res.error || "no data");
+      setError("panel-results-tomorrow", res.error || "no data");
+      return;
+    }
+    const rows = res.data.rows;
+    const todayRows = rows.filter((r) => r.date === res.data.today);
+    const tomorrowRows = rows.filter((r) => r.date === res.data.tomorrow);
+    const warningHtml = res.data.warning ? `<div class="warn">${res.data.warning}</div>` : "";
+
+    const todayHtml = todayRows.length
+      ? renderCollapsibleRows(todayRows, resultRowHtml)
+      : `<div class="empty">No qualifying stocks found.</div>`;
+    const tomorrowHtml = tomorrowRows.length
+      ? renderCollapsibleRows(tomorrowRows, resultRowHtml)
+      : `<div class="empty">No qualifying stocks found.</div>`;
+
+    setBody("panel-results-today", todayHtml + warningHtml, res.fetched_at);
+    setBody("panel-results-tomorrow", tomorrowHtml + warningHtml, res.fetched_at);
+  } catch (e) {
+    setError("panel-results-today", e.message);
+    setError("panel-results-tomorrow", e.message);
+  }
+}
+
+async function loadSlbm() {
+  try {
+    const res = await fetchJSON("/api/slbm");
+    if (!res.data) return setError("panel-slbm", res.error || "no data");
+    const matches = res.data.matches;
+    let html = "";
+    if (!matches.length) {
+      html = `<div class="empty">No symbols currently meet all three criteria.</div>`;
+    } else {
+      const grouped = {};
+      for (const row of matches) (grouped[row._expiry_label || "Unknown"] ||= []).push(row);
+      for (const [expiry, list] of Object.entries(grouped)) {
+        html += `<div class="group-label">${expiry}</div>`;
+        for (const row of list) {
+          html += `<div class="row">
+            <span class="name">${row.symbol}</span>
+            <span class="num">Offer ${row.sellOrderPrice1} | LTP ${row.underLyingLtp} | Yield ${row.annualisedYieldPer}%</span>
+          </div>`;
+        }
+      }
+    }
+    if (res.data.warnings && res.data.warnings.length) {
+      html += `<div class="warn">${res.data.warnings.join("<br>")}</div>`;
+    }
+    setBody("panel-slbm", html, res.fetched_at);
+  } catch (e) { setError("panel-slbm", e.message); }
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetchJSON("/api/status");
+    const pill = document.getElementById("status-pill");
+    pill.textContent = res.is_trading_day ? "TRADING DAY" : "MARKET CLOSED";
+    pill.style.color = res.is_trading_day ? "#00a859" : "#d64545";
+    pill.style.background = res.is_trading_day ? "rgba(0,168,89,0.1)" : "rgba(214,69,69,0.1)";
+  } catch (e) {}
+}
+
+async function refreshAll() {
+  document.getElementById("last-updated").textContent = "Refreshing…";
+  await Promise.all([
+    loadStatus(), loadIndices(), loadNiftyChart(), loadFiiDii(), loadCurrency(),
+    loadCommodities(), loadNews(), load52wh(), loadResults(), loadSlbm(),
+  ]);
+  document.getElementById("last-updated").textContent = "Updated " + new Date().toLocaleTimeString();
+}
+
+// Fast-refreshing panels every 30s; slow scans (52wh/results/slbm) every 5 min
+function fastRefresh() {
+  loadStatus(); loadIndices(); loadNiftyChart(); loadFiiDii(); loadCurrency(); loadCommodities(); loadNews();
+}
+function slowRefresh() {
+  load52wh(); loadResults(); loadSlbm();
+}
+
+refreshAll();
+setInterval(fastRefresh, 30000);
+setInterval(slowRefresh, 300000);
+</script>
+
+</body>
+</html>
